@@ -1,0 +1,86 @@
+{
+  "title": "Input",
+  "description": "Configure what to extract from Facebook posts.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "description": "What to extract: full post details or only the post's date/time.",
+      "editor": "select",
+      "enum": ["POST_DETAILS", "POST_DATES"],
+      "enumTitles": ["Post details (author, text, counts, date)", "Post dates only"]
+    },
+    "urls": {
+      "title": "Post URLs",
+      "type": "array",
+      "description": "Array of Facebook post URLs to open (one per line).",
+      "editor": "stringList",
+      "items": { "type": "string", "description": "A single Facebook post URL." },
+      "default": []
+    },
+    "cookies": {
+      "title": "Cookies",
+      "type": "string",
+      "description": "JSON array, JSON {cookies:[...]}, or a raw Cookie header string.",
+      "editor": "textarea"
+    },
+    "enableOcr": {
+      "title": "Enable OCR fallback",
+      "type": "boolean",
+      "description": "Use Tesseract if DOM parsing fails (slower).",
+      "default": false
+    },
+    "min_wait_ms": {
+      "title": "Min wait (ms)",
+      "type": "integer",
+      "description": "Lower bound of randomized delay between actions.",
+      "default": 1200,
+      "minimum": 0,
+      "unit": "ms"
+    },
+    "max_wait_ms": {
+      "title": "Max wait (ms)",
+      "type": "integer",
+      "description": "Upper bound of randomized delay between actions.",
+      "default": 2500,
+      "minimum": 0,
+      "unit": "ms"
+    },
+    "headless": {
+      "title": "Headless",
+      "type": "boolean",
+      "description": "Run browser in headless mode (no visible window).",
+      "default": true
+    },
+    "viewport": {
+      "title": "Viewport",
+      "type": "object",
+      "description": "Browser viewport size.",
+      "properties": {
+        "width": { "title": "Width", "type": "integer", "description": "Viewport width in px.", "default": 1280, "minimum": 320 },
+        "height": { "title": "Height", "type": "integer", "description": "Viewport height in px.", "default": 900, "minimum": 320 }
+      },
+      "default": { "width": 1280, "height": 900 }
+    },
+    "timezoneId": {
+      "title": "Timezone",
+      "type": "string",
+      "description": "IANA timezone for Playwright context (e.g., Asia/Manila).",
+      "default": "UTC"
+    },
+    "locale": {
+      "title": "Locale",
+      "type": "string",
+      "description": "Locale for the browser (e.g., en-US).",
+      "default": "en-US"
+    },
+    "userAgent": {
+      "title": "User-Agent override",
+      "type": "string",
+      "description": "Optional User-Agent string to spoof."
+    }
+  },
+  "required": ["urls"]
+}

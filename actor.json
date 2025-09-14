@@ -1,0 +1,13 @@
+{
+  "actorSpecification": 1,
+  "name": "fb-posts-and-dates-merged",
+  "title": "Facebook posts + dates (Playwright)",
+  "description": "Scrape Facebook post details or only the post date given a list of post URLs.",
+  "version": "0.3",
+  "buildTag": "latest",
+  "defaultRunOptions": {
+    "build": "latest",
+    "timeoutSecs": 3600,
+    "memoryMbytes": 2048
+  }
+}

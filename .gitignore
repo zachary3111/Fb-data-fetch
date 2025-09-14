@@ -1,0 +1,7 @@
+node_modules
+dist
+.apify_storage
+.apify
+npm-debug.log*
+yarn-error.log*
+*.local
