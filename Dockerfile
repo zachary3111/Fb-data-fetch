@@ -1,8 +1,20 @@
-# Use Playwright-enabled image. If running on Apify, their *-playwright images include browsers.
-FROM apify/actor-node:22-playwright
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-WORKDIR /usr/src/app
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
-COPY . ./
-CMD ["node", "src/main.js"]
+# Use the correct Apify base image with Playwright and all browsers
+FROM apify/actor-node-playwright:latest
+
+# Copy package files
+COPY --chown=myuser:myuser package*.json ./
+
+# Install dependencies
+RUN npm --quiet set progress=false \
+    && npm install --only=prod --no-optional \
+    && echo "Installed NPM packages:" \
+    && (npm list --only=prod --no-optional --all || true) \
+    && echo "Node.js version:" \
+    && node --version \
+    && echo "NPM version:" \
+    && npm --version
+
+# Copy source code
+COPY --chown=myuser:myuser . ./
+
+# The container will run as 'myuser' (non-root) by default
