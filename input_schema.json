@@ -5,14 +5,10 @@
   "properties": {
     "urls": {
       "title": "Facebook URLs",
-      "type": "array",
-      "description": "List of Facebook URLs to fetch data from",
-      "editor": "stringArray",
-      "items": {
-        "type": "string",
-        "title": "URL"
-      },
-      "minItems": 1
+      "type": "string",
+      "description": "Enter Facebook URLs to fetch data from (one per line)",
+      "editor": "textarea",
+      "prefill": "https://www.facebook.com/example-page\nhttps://www.facebook.com/another-page"
     },
     "maxItems": {
       "title": "Maximum items to fetch",
@@ -21,6 +17,12 @@
       "minimum": 1,
       "maximum": 1000,
       "default": 100
+    },
+    "waitForSelector": {
+      "title": "Wait for selector",
+      "type": "string",
+      "description": "CSS selector to wait for before scraping (optional)",
+      "editor": "textfield"
     }
   },
   "required": ["urls"]
