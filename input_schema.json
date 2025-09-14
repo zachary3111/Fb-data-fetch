@@ -23,6 +23,32 @@
       "type": "string",
       "description": "CSS selector to wait for before scraping (optional)",
       "editor": "textfield"
+    },
+    "cookies": {
+      "title": "Facebook Cookies (Recommended)",
+      "type": "string",
+      "description": "Facebook authentication cookies for accessing private content. Export from browser developer tools (F12 → Application → Cookies → facebook.com). Supports JSON array format or cookie header string.",
+      "editor": "textarea",
+      "example": "[{\"name\":\"c_user\",\"value\":\"123456789\",\"domain\":\".facebook.com\"},{\"name\":\"xs\",\"value\":\"abc123\",\"domain\":\".facebook.com\"}]"
+    },
+    "email": {
+      "title": "Facebook Email (Fallback)",
+      "type": "string",
+      "description": "Facebook login email - used as fallback if cookies are not provided or invalid. Note: Email/password login may trigger security checks.",
+      "editor": "textfield"
+    },
+    "password": {
+      "title": "Facebook Password (Fallback)",
+      "type": "string",
+      "description": "Facebook login password - used as fallback if cookies are not provided or invalid",
+      "editor": "textfield",
+      "isSecret": true
+    },
+    "useLoginBypass": {
+      "title": "Use Login Bypass",
+      "type": "boolean",
+      "description": "Attempt to bypass login requirements using technical methods (limited effectiveness)",
+      "default": true
     }
   },
   "required": ["urls"]
