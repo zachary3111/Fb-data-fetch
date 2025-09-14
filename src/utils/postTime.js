@@ -197,4 +197,250 @@ export async function extractPostDateISO(page, opts = {}) {
   const textCandidates = found
     .filter(c => c.kind === 'text')
     .sort((a, b) => {
-      // Prioritize shorter
+      // Prioritize shorter text and more specific patterns
+      const aLen = a.value?.length || 0;
+      const bLen = b.value?.length || 0;
+      const aSpecific = /^\d+[smhd]$/.test(a.value) ? 1 : 0;
+      const bSpecific = /^\d+[smhd]$/.test(b.value) ? 1 : 0;
+      
+      if (aSpecific !== bSpecific) return bSpecific - aSpecific;
+      return aLen - bLen;
+    });
+  
+  for (const c of textCandidates) {
+    const iso = parseLooseDate(c.value); 
+    if (iso) {
+      console.log('Found valid text time:', c.value, '=>', iso);
+      return { 
+        iso, 
+        raw: c.text || c.value, 
+        source: 'dom-text' 
+      }; 
+    }
+  }
+
+  // Fallback: Enhanced page scan for time patterns
+  console.log('Trying fallback page scan...');
+  const fallbackResult = await page.evaluate(() => {
+    const bodyText = document.body.innerText || '';
+    const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean);
+    
+    // Look for standalone time patterns in the text
+    const timeRegexes = [
+      /\b\d+[smhd]\b/g,                                   // 3d, 2h, etc.
+      /\b\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago\b/gi,
+      /\b(yesterday|today)\s+at\s+\d{1,2}:\d{2}\s*(am|pm)?\b/gi,
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\s+at\s+\d{1,2}:\d{2}\s*(am|pm)?\b/gi,
+      /\bjust\s+now\b/gi
+    ];
+    
+    for (const line of lines) {
+      if (line.length > 200) continue; // Skip very long lines
+      
+      for (const regex of timeRegexes) {
+        const matches = line.match(regex);
+        if (matches) {
+          for (const match of matches) {
+            const trimmed = match.trim();
+            if (trimmed.length <= 50 && trimmed.length >= 2) {
+              return trimmed;
+            }
+          }
+        }
+      }
+    }
+    
+    return null;
+  });
+  
+  if (fallbackResult) {
+    const iso = parseLooseDate(fallbackResult);
+    if (iso) {
+      console.log('Found valid fallback time:', fallbackResult, '=>', iso);
+      return {
+        iso,
+        raw: fallbackResult,
+        source: 'fallback-scan'
+      };
+    }
+  }
+
+  if (enableOcr) {
+    console.log('Attempting OCR extraction...');
+    try {
+      const clip = await locateHeaderBox(page);
+      const buf = await page.screenshot({ clip, type: 'png' });
+      const worker = await getOcrWorker();
+      const { data } = await worker.recognize(buf);
+      const text = (data?.text || '').replace(/\s+/g, ' ').trim();
+      const iso = parseLooseDate(text);
+      if (iso) {
+        console.log('Found valid OCR time:', text, '=>', iso);
+        return { 
+          iso, 
+          raw: text, 
+          source: 'ocr' 
+        };
+      }
+    } catch (e) {
+      console.log('OCR extraction failed:', e.message);
+    }
+  }
+  
+  console.log('No valid time information found');
+  return null;
+}
+
+async function getOcrWorker() {
+  if (ocrWorker) return ocrWorker;
+  const { createWorker } = await import('tesseract.js');
+  ocrWorker = await createWorker({ logger: null });
+  await ocrWorker.loadLanguage('eng');
+  await ocrWorker.initialize('eng');
+  return ocrWorker;
+}
+
+export async function disposeOcr() { 
+  try { 
+    if (ocrWorker) await ocrWorker.terminate(); 
+  } finally { 
+    ocrWorker = null; 
+  } 
+}
+
+function normalizeToISO(v) { 
+  try { 
+    const d = new Date(v); 
+    if (!isFinite(d.getTime())) return null; 
+    return d.toISOString(); 
+  } catch { 
+    return null; 
+  } 
+}
+
+/**
+ * Parse Facebook-style relative dates to ISO timestamps.
+ * Enhanced to handle more formats and provide better accuracy.
+ */
+export function parseLooseDate(text, opts = {}) {
+  if (!text) return null;
+  const now = opts.now instanceof Date ? new Date(opts.now.getTime()) : new Date();
+
+  const cleaned = String(text).trim();
+  const lower = cleaned.toLowerCase();
+
+  // Handle "just now"
+  if (/(^|\b)just\s*now(\b|$)/i.test(cleaned)) return toISO(now);
+
+  // Handle relative time formats: "3d", "2h", "45m", "30s" - Enhanced with more flexibility
+  const relativeMatch = lower.match(/(\d{1,3})\s*(s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours|d|day|days|w|week|weeks|mo|month|months|y|year|years)(\s+ago)?/i);
+  if (relativeMatch) {
+    const n = parseInt(relativeMatch[1], 10);
+    const unit = relativeMatch[2].toLowerCase();
+    const dt = new Date(now);
+    
+    if (unit.startsWith('s')) dt.setSeconds(dt.getSeconds() - n);
+    else if (unit.startsWith('m')) dt.setMinutes(dt.getMinutes() - n);
+    else if (unit.startsWith('h')) dt.setHours(dt.getHours() - n);
+    else if (unit.startsWith('d')) dt.setDate(dt.getDate() - n);
+    else if (unit.startsWith('w')) dt.setDate(dt.getDate() - (n * 7));
+    else if (unit.startsWith('mo')) dt.setMonth(dt.getMonth() - n);
+    else if (unit.startsWith('y')) dt.setFullYear(dt.getFullYear() - n);
+    
+    return toISO(dt);
+  }
+
+  // Handle "Yesterday at HH:MM AM/PM"
+  const yesterdayMatch = cleaned.match(/yesterday\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (yesterdayMatch) {
+    const dt = new Date(now);
+    dt.setDate(dt.getDate() - 1);
+    let h = parseInt(yesterdayMatch[1], 10);
+    const m = parseInt(yesterdayMatch[2], 10);
+    const ampm = yesterdayMatch[3].toLowerCase();
+    
+    if (ampm === 'pm' && h !== 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    
+    dt.setHours(h, m, 0, 0);
+    return toISO(dt);
+  }
+
+  // Handle "Month DD at HH:MM AM/PM"
+  const monthDateMatch = cleaned.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (monthDateMatch) {
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+    const month = monthNames.findIndex((m) => m === monthDateMatch[1].toLowerCase());
+    const day = parseInt(monthDateMatch[2], 10);
+    let h = parseInt(monthDateMatch[3], 10);
+    const m = parseInt(monthDateMatch[4], 10);
+    const ampm = monthDateMatch[5].toLowerCase();
+    
+    if (ampm === 'pm' && h !== 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    
+    const dt = new Date(now);
+    dt.setMonth(month, day);
+    dt.setHours(h, m, 0, 0);
+    
+    // Handle year boundary (if month/day is in future, assume previous year)
+    if (dt > now) {
+      dt.setFullYear(dt.getFullYear() - 1);
+    }
+    
+    return toISO(dt);
+  }
+
+  // Handle "Month DD, YYYY at HH:MM AM/PM"
+  const fullDateMatch = cleaned.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),\s*(\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (fullDateMatch) {
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+    const month = monthNames.findIndex((m) => m === fullDateMatch[1].toLowerCase());
+    const day = parseInt(fullDateMatch[2], 10);
+    const year = parseInt(fullDateMatch[3], 10);
+    let h = parseInt(fullDateMatch[4], 10);
+    const m = parseInt(fullDateMatch[5], 10);
+    const ampm = fullDateMatch[6].toLowerCase();
+    
+    if (ampm === 'pm' && h !== 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    
+    const dt = new Date(year, month, day, h, m, 0, 0);
+    return toISO(dt);
+  }
+
+  // Handle standalone relative time like "3d" without "ago"
+  const standaloneMatch = lower.match(/^(\d{1,3})\s*([smhd])$/);
+  if (standaloneMatch) {
+    const n = parseInt(standaloneMatch[1], 10);
+    const unit = standaloneMatch[2];
+    const dt = new Date(now);
+    
+    if (unit === 's') dt.setSeconds(dt.getSeconds() - n);
+    else if (unit === 'm') dt.setMinutes(dt.getMinutes() - n);
+    else if (unit === 'h') dt.setHours(dt.getHours() - n);
+    else if (unit === 'd') dt.setDate(dt.getDate() - n);
+    
+    return toISO(dt);
+  }
+
+  // Try standard Date parsing as fallback
+  const dt = new Date(cleaned);
+  if (isFinite(dt.getTime())) return toISO(dt);
+  
+  return null;
+}
+
+function toISO(d) { 
+  return new Date(d.getTime()).toISOString(); 
+}
+
+export async function locateHeaderBox(page) {
+  const rect = await page.evaluate(() => {
+    const el = document.querySelector('[role="article"]') || document.querySelector('div[aria-posinset]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: Math.min(r.width, 800), height: Math.min(r.height, 220) };
+  });
+  return rect || { x: 0, y: 0, width: 900, height: 240 };
+}
