@@ -6,17 +6,13 @@ await Actor.init();
 try {
     console.log('Actor started successfully!');
     
-    // Get the input
     const input = await Actor.getInput();
     console.log('Raw input:', input);
 
-    // Process the URLs input
+    // Process URLs
     let urls;
     if (typeof input.urls === 'string') {
-        urls = input.urls
-            .split('\n')
-            .map(url => url.trim())
-            .filter(url => url.length > 0);
+        urls = input.urls.split('\n').map(url => url.trim()).filter(url => url.length > 0);
     } else if (Array.isArray(input.urls)) {
         urls = input.urls;
     } else {
@@ -29,7 +25,7 @@ try {
 
     console.log('Processed URLs:', urls);
 
-    // Launch browser with more comprehensive options
+    // Launch browser
     console.log('Launching browser...');
     const browser = await chromium.launch({
         headless: true,
@@ -47,16 +43,12 @@ try {
         ]
     });
 
-    console.log('Browser launched successfully!');
-
     try {
-        // Create a single page context
         const context = await browser.newContext({
             viewport: { width: 1920, height: 1080 },
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
 
-        // Process each URL
         for (let i = 0; i < urls.length; i++) {
             const url = urls[i];
             console.log(`Processing URL ${i + 1}/${urls.length}: ${url}`);
@@ -64,53 +56,125 @@ try {
             const page = await context.newPage();
             
             try {
-                // Set a longer timeout and better error handling
                 console.log(`Navigating to: ${url}`);
-                const response = await page.goto(url, { 
-                    waitUntil: 'domcontentloaded',
-                    timeout: 45000 
-                });
                 
-                if (!response || !response.ok()) {
-                    throw new Error(`Failed to load page: ${response?.status()} ${response?.statusText()}`);
-                }
-                
-                console.log('Page loaded, waiting for content...');
-                
-                // Wait for content to load with fallback
-                try {
-                    await page.waitForSelector('body', { timeout: 10000 });
-                } catch (e) {
-                    console.log('Body selector timeout, continuing anyway...');
-                }
-                
-                // Add a small delay to let dynamic content load
-                await page.waitForTimeout(3000);
-                
-                // Extract data
-                console.log('Extracting data...');
-                const data = await page.evaluate(() => {
-                    return {
-                        url: window.location.href,
-                        title: document.title,
-                        timestamp: new Date().toISOString(),
-                        content: document.body?.innerText?.substring(0, 2000) || 'No content found',
-                        htmlLength: document.documentElement.innerHTML.length,
-                        // Basic Facebook post detection
-                        hasFacebookContent: document.querySelector('[data-testid]') !== null,
-                    };
-                });
+                // Try different strategies to access content
+                const strategies = [
+                    // Strategy 1: Try mobile Facebook (often less restrictive)
+                    url.replace('www.facebook.com', 'm.facebook.com'),
+                    // Strategy 2: Try adding fbclid parameter (sometimes helps)
+                    url + (url.includes('?') ? '&' : '?') + 'fbclid=bypass',
+                    // Strategy 3: Original URL
+                    url
+                ];
 
-                console.log(`Successfully scraped: ${data.title}`);
-                console.log(`Content preview: ${data.content.substring(0, 100)}...`);
+                let successData = null;
                 
-                // Save the data
-                await Actor.pushData(data);
+                for (const [strategyIndex, strategyUrl] of strategies.entries()) {
+                    console.log(`Trying strategy ${strategyIndex + 1}: ${strategyUrl}`);
+                    
+                    try {
+                        const response = await page.goto(strategyUrl, { 
+                            waitUntil: 'domcontentloaded',
+                            timeout: 30000 
+                        });
+                        
+                        if (!response || !response.ok()) {
+                            console.log(`Strategy ${strategyIndex + 1} failed: ${response?.status()}`);
+                            continue;
+                        }
+                        
+                        // Wait for content
+                        await page.waitForTimeout(3000);
+                        
+                        // Check if we're on a login page
+                        const isLoginPage = await page.evaluate(() => {
+                            const loginIndicators = [
+                                'input[name="email"]',
+                                'input[name="pass"]', 
+                                'Log In',
+                                'Create new account'
+                            ];
+                            return loginIndicators.some(indicator => 
+                                document.body.innerText.includes(indicator) || 
+                                document.querySelector(indicator)
+                            );
+                        });
+                        
+                        if (isLoginPage) {
+                            console.log(`Strategy ${strategyIndex + 1}: Login required`);
+                            continue;
+                        }
+                        
+                        // Extract data
+                        const data = await page.evaluate(() => {
+                            // Look for Facebook post content
+                            const postSelectors = [
+                                '[data-testid="post_message"]',
+                                '[data-testid="post-content"]',
+                                '.userContent',
+                                '.story_body_container',
+                                '[role="article"]'
+                            ];
+                            
+                            let postContent = '';
+                            for (const selector of postSelectors) {
+                                const element = document.querySelector(selector);
+                                if (element) {
+                                    postContent = element.innerText;
+                                    break;
+                                }
+                            }
+                            
+                            // Get all text content as fallback
+                            const allText = document.body.innerText;
+                            
+                            return {
+                                url: window.location.href,
+                                title: document.title,
+                                timestamp: new Date().toISOString(),
+                                postContent: postContent || 'No post content found',
+                                fullContent: allText.substring(0, 5000),
+                                htmlLength: document.documentElement.innerHTML.length,
+                                hasFacebookContent: document.querySelector('[data-testid]') !== null,
+                                hasPostContent: postContent.length > 0,
+                                strategy: strategyIndex + 1,
+                                requiresLogin: allText.includes('Log In') || allText.includes('Create new account')
+                            };
+                        });
+                        
+                        if (!data.requiresLogin && data.hasPostContent) {
+                            console.log(`Strategy ${strategyIndex + 1} SUCCESS: Found post content!`);
+                            successData = data;
+                            break;
+                        } else if (!data.requiresLogin) {
+                            console.log(`Strategy ${strategyIndex + 1}: No login required but limited content`);
+                            successData = data; // Keep as backup
+                        }
+                        
+                    } catch (error) {
+                        console.log(`Strategy ${strategyIndex + 1} error:`, error.message);
+                    }
+                }
+                
+                // Save the best result we got
+                if (successData) {
+                    console.log(`Successfully scraped with strategy ${successData.strategy}`);
+                    console.log(`Post content preview: ${successData.postContent.substring(0, 100)}...`);
+                    await Actor.pushData(successData);
+                } else {
+                    // Save error info
+                    await Actor.pushData({
+                        url: url,
+                        error: 'All strategies failed - content requires login',
+                        failed: true,
+                        timestamp: new Date().toISOString(),
+                        strategiesTried: strategies.length
+                    });
+                }
                 
             } catch (error) {
                 console.error(`Error processing ${url}:`, error.message);
-                
-                // Save error info
                 await Actor.pushData({
                     url: url,
                     error: error.message,
@@ -121,9 +185,8 @@ try {
                 await page.close();
             }
             
-            // Small delay between requests
+            // Delay between requests
             if (i < urls.length - 1) {
-                console.log('Waiting before next request...');
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
@@ -132,14 +195,12 @@ try {
         
     } finally {
         await browser.close();
-        console.log('Browser closed.');
     }
     
-    console.log('Scraping completed successfully!');
+    console.log('Scraping completed!');
 
 } catch (error) {
     console.error('Actor failed:', error.message);
-    console.error('Full error:', error);
     throw error;
 }
 
