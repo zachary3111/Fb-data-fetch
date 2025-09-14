@@ -1,5 +1,6 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
+import { parseCookiesInput } from './utils/cookies.js';
 
 await Actor.init();
 
@@ -12,6 +13,7 @@ try {
         maxItems: input.maxItems,
         hasEmail: !!input.email,
         hasPassword: !!input.password,
+        hasCookies: !!input.cookies,
         useLoginBypass: input.useLoginBypass
     });
 
@@ -31,9 +33,22 @@ try {
 
     console.log('Processed URLs:', urls);
 
-    // Check if login credentials are provided
+    // Check authentication methods
     const hasCredentials = input.email && input.password;
+    const hasCookies = input.cookies;
     console.log('Login credentials provided:', hasCredentials);
+    console.log('Facebook cookies provided:', hasCookies);
+
+    // Parse cookies if provided
+    let parsedCookies = [];
+    if (hasCookies) {
+        try {
+            parsedCookies = parseCookiesInput(input.cookies);
+            console.log('Successfully parsed cookies:', parsedCookies.length, 'cookies found');
+        } catch (error) {
+            console.error('Failed to parse cookies:', error.message);
+        }
+    }
 
     // Launch browser
     console.log('Launching browser...');
@@ -60,14 +75,76 @@ try {
         });
 
         let isLoggedIn = false;
+        let authMethod = 'none';
 
-        // Login if credentials provided
-        if (hasCredentials) {
-            console.log('Attempting Facebook login...');
+        // Priority: Cookies first, then email/password
+        if (parsedCookies.length > 0) {
+            console.log('Attempting to set Facebook cookies...');
+            
+            try {
+                // Add cookies to the context
+                await context.addCookies(parsedCookies);
+                console.log('Cookies added to browser context successfully');
+                
+                // Test cookies by visiting Facebook
+                const testPage = await context.newPage();
+                await testPage.goto('https://www.facebook.com', { waitUntil: 'domcontentloaded', timeout: 15000 });
+                
+                // Wait a moment for page to load
+                await testPage.waitForTimeout(3000);
+                
+                // Check if we're logged in by looking for common logged-in elements
+                const loggedInCheck = await testPage.evaluate(() => {
+                    // Multiple indicators that we're logged in
+                    const indicators = [
+                        // Navigation elements that appear when logged in
+                        document.querySelector('[data-testid="blue_bar"]'),
+                        document.querySelector('[aria-label="Account"]'),
+                        document.querySelector('[data-testid="nav-user-profile"]'),
+                        // Check if we're not on login page
+                        !document.querySelector('#email'),
+                        !document.querySelector('input[name="email"]'),
+                        // Check for feed or main content
+                        document.querySelector('[role="feed"]'),
+                        document.querySelector('[data-pagelet="FeedUnit"]')
+                    ];
+                    
+                    const positiveIndicators = indicators.filter(Boolean).length;
+                    const currentUrl = window.location.href;
+                    const notOnLoginPage = !currentUrl.includes('/login') && !currentUrl.includes('/recover');
+                    
+                    return {
+                        loggedIn: positiveIndicators >= 2 && notOnLoginPage,
+                        url: currentUrl,
+                        positiveIndicators: positiveIndicators,
+                        hasUserElements: !!document.querySelector('[data-testid="blue_bar"]')
+                    };
+                });
+                
+                console.log('Cookie login check:', loggedInCheck);
+                
+                if (loggedInCheck.loggedIn) {
+                    console.log('Cookie authentication successful!');
+                    isLoggedIn = true;
+                    authMethod = 'cookies';
+                } else {
+                    console.log('Cookies appear invalid or expired');
+                }
+                
+                await testPage.close();
+                
+            } catch (error) {
+                console.error('Cookie authentication error:', error.message);
+            }
+        }
+
+        // Fallback to email/password if cookies failed or not provided
+        if (!isLoggedIn && hasCredentials) {
+            console.log('Attempting Facebook login with email/password...');
             
             try {
                 const loginPage = await context.newPage();
-                await loginPage.goto('https://www.facebook.com/login', { waitUntil: 'domcontentloaded' });
+                await loginPage.goto('https://www.facebook.com/login', { waitUntil: 'domcontentloaded', timeout: 15000 });
                 
                 // Wait for login form
                 await loginPage.waitForSelector('#email', { timeout: 10000 });
@@ -85,8 +162,9 @@ try {
                 // Check if login was successful
                 const currentUrl = loginPage.url();
                 if (currentUrl.includes('facebook.com') && !currentUrl.includes('login')) {
-                    console.log('Login successful!');
+                    console.log('Email/password login successful!');
                     isLoggedIn = true;
+                    authMethod = 'credentials';
                 } else {
                     console.log('Login failed - invalid credentials or security check');
                 }
@@ -94,9 +172,11 @@ try {
                 await loginPage.close();
                 
             } catch (error) {
-                console.error('Login error:', error.message);
+                console.error('Email/password login error:', error.message);
             }
         }
+
+        console.log('Final authentication status:', { isLoggedIn, authMethod });
 
         // Process each URL
         for (let i = 0; i < urls.length; i++) {
@@ -139,7 +219,12 @@ try {
                         
                         // General content
                         '[role="article"]',
-                        '.accessible_elem'
+                        '.accessible_elem',
+                        
+                        // Page content
+                        '[data-testid="page-about-content"]',
+                        '[data-testid="page-header"]',
+                        '.page-about-content'
                     ];
                     
                     let foundContent = [];
@@ -160,8 +245,10 @@ try {
                     // Check for login requirement
                     const bodyText = document.body.innerText;
                     const requiresLogin = bodyText.includes('Log In') || 
+                                        bodyText.includes('Log into Facebook') ||
                                         bodyText.includes('Create new account') ||
-                                        bodyText.includes('See more on Facebook');
+                                        bodyText.includes('See more on Facebook') ||
+                                        bodyText.includes('You must log in');
                     
                     // Get page metadata
                     const metaTags = {};
@@ -173,35 +260,74 @@ try {
                         }
                     });
                     
+                    // Check for specific login-protected content indicators
+                    const loginIndicators = [
+                        'Log into Facebook to start sharing',
+                        'You\'re Temporarily Blocked',
+                        'Content Not Found',
+                        'This content isn\'t available right now'
+                    ];
+                    
+                    const hasLoginIndicator = loginIndicators.some(indicator => 
+                        bodyText.includes(indicator)
+                    );
+                    
                     return {
                         url: window.location.href,
                         title: document.title,
                         timestamp: new Date().toISOString(),
-                        requiresLogin: requiresLogin,
+                        requiresLogin: requiresLogin || hasLoginIndicator,
                         foundContent: foundContent,
                         contentCount: foundContent.length,
                         allText: bodyText.substring(0, 3000),
                         htmlLength: document.documentElement.innerHTML.length,
                         metaTags: metaTags,
-                        hasFacebookElements: document.querySelector('[data-testid]') !== null
+                        hasFacebookElements: document.querySelector('[data-testid]') !== null,
+                        pageType: detectPageType(window.location.href, bodyText)
                     };
+                    
+                    function detectPageType(url, text) {
+                        if (url.includes('/posts/')) return 'post';
+                        if (url.includes('/videos/')) return 'video';
+                        if (url.includes('/photos/')) return 'photo';
+                        if (url.includes('/events/')) return 'event';
+                        if (text.includes('Business Page')) return 'business_page';
+                        if (text.includes('Public Figure')) return 'public_figure';
+                        return 'page';
+                    }
                 });
                 
-                // Determine success
+                // Enhanced result with authentication info
+                const result = {
+                    ...data,
+                    authentication: {
+                        isLoggedIn: isLoggedIn,
+                        method: authMethod,
+                        cookiesUsed: authMethod === 'cookies'
+                    }
+                };
+                
+                // Determine success and provide appropriate feedback
                 if (data.requiresLogin && !isLoggedIn) {
-                    console.log('Content requires login and no valid session');
+                    console.log('Content requires login and no valid authentication');
                     await Actor.pushData({
-                        ...data,
-                        warning: 'Content requires login. Provide email/password in input for full access.',
+                        ...result,
+                        warning: 'Content requires login. Provide valid Facebook cookies or email/password for full access.',
                         partialData: true
+                    });
+                } else if (data.requiresLogin && isLoggedIn) {
+                    console.log('Content was login-protected but we have valid authentication');
+                    await Actor.pushData({
+                        ...result,
+                        warning: 'Content required login - accessed with valid authentication'
                     });
                 } else if (data.contentCount > 0) {
                     console.log(`Success! Found ${data.contentCount} content elements`);
-                    await Actor.pushData(data);
+                    await Actor.pushData(result);
                 } else {
                     console.log('No content found, but page loaded successfully');
                     await Actor.pushData({
-                        ...data,
+                        ...result,
                         warning: 'Page loaded but no recognizable content found'
                     });
                 }
@@ -212,7 +338,12 @@ try {
                     url: url,
                     error: error.message,
                     failed: true,
-                    timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString(),
+                    authentication: {
+                        isLoggedIn: isLoggedIn,
+                        method: authMethod,
+                        cookiesUsed: authMethod === 'cookies'
+                    }
                 });
             } finally {
                 await page.close();
@@ -220,7 +351,9 @@ try {
             
             // Delay between requests
             if (i < urls.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                const delay = isLoggedIn ? 2000 : 5000; // Shorter delay if logged in
+                console.log(`Waiting ${delay}ms before next request...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
         
