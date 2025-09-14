@@ -1,19 +1,25 @@
 {
-  "name": "fb-posts-and-dates-merged",
-  "version": "0.3.2",
-  "private": true,
+  "name": "fb-data-fetch",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Apify actor: scrape Facebook post details or post dates (with OCR fallback)",
+  "description": "Facebook data fetching actor",
+  "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js",
-    "test:smoke": "node scripts/smoke-parse-dates.mjs",
-    "test:dates": "node scripts/test-parse-dates.mjs",
-    "test:edges": "node scripts/test-parse-dates-edges.mjs",
-    "test": "npm run test:smoke && npm run test:dates && npm run test:edges"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "apify": "^3.1.10",
-    "playwright": "^1.47.2",
-    "tesseract.js": "^5.1.0"
-  }
+    "apify": "^3.0.0",
+    "crawlee": "^3.0.0",
+    "playwright": "^1.40.0"
+  },
+  "keywords": [
+    "apify",
+    "actor",
+    "facebook",
+    "scraping",
+    "crawlee"
+  ],
+  "author": "",
+  "license": "Apache-2.0"
 }
