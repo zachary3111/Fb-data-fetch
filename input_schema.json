@@ -26,25 +26,4 @@
     }
   },
   "required": ["urls"]
-}      "default": { "width": 1280, "height": 900 }
-    },
-    "timezoneId": {
-      "title": "Timezone",
-      "type": "string",
-      "description": "IANA timezone for Playwright context (e.g., Asia/Manila).",
-      "default": "UTC"
-    },
-    "locale": {
-      "title": "Locale",
-      "type": "string",
-      "description": "Locale for the browser (e.g., en-US).",
-      "default": "en-US"
-    },
-    "userAgent": {
-      "title": "User-Agent override",
-      "type": "string",
-      "description": "Optional User-Agent string to spoof."
-    }
-  },
-  "required": ["urls"]
 }
