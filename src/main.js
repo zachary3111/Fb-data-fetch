@@ -1,6 +1,8 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
 import { parseCookiesInput } from './utils/cookies.js';
+import { extractPostDateISO } from './utils/postTime.js';
+import { extractPageInfo } from './utils/pageInfo.js';
 
 await Actor.init();
 
@@ -41,12 +43,16 @@ try {
 
     // Parse cookies if provided
     let parsedCookies = [];
+    let cookieApplyResult = { set: 0, skipped: 0, errors: [] };
+    
     if (hasCookies) {
         try {
             parsedCookies = parseCookiesInput(input.cookies);
             console.log('Successfully parsed cookies:', parsedCookies.length, 'cookies found');
+            cookieApplyResult.set = parsedCookies.length;
         } catch (error) {
             console.error('Failed to parse cookies:', error.message);
+            cookieApplyResult.errors.push(error.message);
         }
     }
 
@@ -82,29 +88,20 @@ try {
             console.log('Attempting to set Facebook cookies...');
             
             try {
-                // Add cookies to the context
                 await context.addCookies(parsedCookies);
                 console.log('Cookies added to browser context successfully');
                 
-                // Test cookies by visiting Facebook
                 const testPage = await context.newPage();
                 await testPage.goto('https://www.facebook.com', { waitUntil: 'domcontentloaded', timeout: 15000 });
-                
-                // Wait a moment for page to load
                 await testPage.waitForTimeout(3000);
                 
-                // Check if we're logged in by looking for common logged-in elements
                 const loggedInCheck = await testPage.evaluate(() => {
-                    // Multiple indicators that we're logged in
                     const indicators = [
-                        // Navigation elements that appear when logged in
                         document.querySelector('[data-testid="blue_bar"]'),
                         document.querySelector('[aria-label="Account"]'),
                         document.querySelector('[data-testid="nav-user-profile"]'),
-                        // Check if we're not on login page
                         !document.querySelector('#email'),
                         !document.querySelector('input[name="email"]'),
-                        // Check for feed or main content
                         document.querySelector('[role="feed"]'),
                         document.querySelector('[data-pagelet="FeedUnit"]')
                     ];
@@ -121,8 +118,6 @@ try {
                     };
                 });
                 
-                console.log('Cookie login check:', loggedInCheck);
-                
                 if (loggedInCheck.loggedIn) {
                     console.log('Cookie authentication successful!');
                     isLoggedIn = true;
@@ -135,6 +130,7 @@ try {
                 
             } catch (error) {
                 console.error('Cookie authentication error:', error.message);
+                cookieApplyResult.errors.push(error.message);
             }
         }
 
@@ -146,20 +142,13 @@ try {
                 const loginPage = await context.newPage();
                 await loginPage.goto('https://www.facebook.com/login', { waitUntil: 'domcontentloaded', timeout: 15000 });
                 
-                // Wait for login form
                 await loginPage.waitForSelector('#email', { timeout: 10000 });
                 
-                // Fill login form
                 await loginPage.fill('#email', input.email);
                 await loginPage.fill('#pass', input.password);
-                
-                // Click login button
                 await loginPage.click('[name="login"]');
-                
-                // Wait for navigation (login success or failure)
                 await loginPage.waitForTimeout(5000);
                 
-                // Check if login was successful
                 const currentUrl = loginPage.url();
                 if (currentUrl.includes('facebook.com') && !currentUrl.includes('login')) {
                     console.log('Email/password login successful!');
@@ -199,151 +188,187 @@ try {
                 
                 // Wait for content to load
                 await page.waitForTimeout(5000);
-                
-                // Extract comprehensive data
-                const data = await page.evaluate(() => {
-                    // Multiple selectors for different types of Facebook content
-                    const contentSelectors = [
-                        // Post content
-                        '[data-testid="post_message"]',
-                        '[data-testid="post-content"]', 
-                        '.userContent',
-                        '.story_body_container',
-                        
-                        // Video/Reel specific
-                        '[data-testid="video-component-description"]',
-                        '[data-testid="reel-video-description"]',
-                        
-                        // Comments
-                        '[data-testid="comment"]',
-                        
-                        // General content
-                        '[role="article"]',
-                        '.accessible_elem',
-                        
-                        // Page content
-                        '[data-testid="page-about-content"]',
-                        '[data-testid="page-header"]',
-                        '.page-about-content'
-                    ];
-                    
-                    let foundContent = [];
-                    
-                    contentSelectors.forEach(selector => {
-                        const elements = document.querySelectorAll(selector);
-                        elements.forEach(el => {
-                            const text = el.innerText?.trim();
-                            if (text && text.length > 10) {
-                                foundContent.push({
-                                    selector: selector,
-                                    content: text.substring(0, 500)
-                                });
-                            }
-                        });
-                    });
-                    
-                    // Check for login requirement
-                    const bodyText = document.body.innerText;
-                    const requiresLogin = bodyText.includes('Log In') || 
-                                        bodyText.includes('Log into Facebook') ||
-                                        bodyText.includes('Create new account') ||
-                                        bodyText.includes('See more on Facebook') ||
-                                        bodyText.includes('You must log in');
-                    
-                    // Get page metadata
-                    const metaTags = {};
-                    document.querySelectorAll('meta[property^="og:"], meta[name^="twitter:"]').forEach(meta => {
-                        const property = meta.getAttribute('property') || meta.getAttribute('name');
-                        const content = meta.getAttribute('content');
-                        if (property && content) {
-                            metaTags[property] = content;
-                        }
-                    });
-                    
-                    // Check for specific login-protected content indicators
-                    const loginIndicators = [
-                        'Log into Facebook to start sharing',
-                        'You\'re Temporarily Blocked',
-                        'Content Not Found',
-                        'This content isn\'t available right now'
-                    ];
-                    
-                    const hasLoginIndicator = loginIndicators.some(indicator => 
-                        bodyText.includes(indicator)
-                    );
-                    
-                    return {
-                        url: window.location.href,
-                        title: document.title,
-                        timestamp: new Date().toISOString(),
-                        requiresLogin: requiresLogin || hasLoginIndicator,
-                        foundContent: foundContent,
-                        contentCount: foundContent.length,
-                        allText: bodyText.substring(0, 3000),
-                        htmlLength: document.documentElement.innerHTML.length,
-                        metaTags: metaTags,
-                        hasFacebookElements: document.querySelector('[data-testid]') !== null,
-                        pageType: detectPageType(window.location.href, bodyText)
-                    };
-                    
-                    function detectPageType(url, text) {
-                        if (url.includes('/posts/')) return 'post';
-                        if (url.includes('/videos/')) return 'video';
-                        if (url.includes('/photos/')) return 'photo';
-                        if (url.includes('/events/')) return 'event';
-                        if (text.includes('Business Page')) return 'business_page';
-                        if (text.includes('Public Figure')) return 'public_figure';
-                        return 'page';
-                    }
+
+                // Take screenshot for debugging
+                const screenshotBuffer = await page.screenshot({ 
+                    fullPage: false,
+                    type: 'png'
                 });
                 
-                // Enhanced result with authentication info
-                const result = {
-                    ...data,
-                    authentication: {
-                        isLoggedIn: isLoggedIn,
-                        method: authMethod,
-                        cookiesUsed: authMethod === 'cookies'
+                const screenshotKey = `screenshot_${Date.now()}_${i}`;
+                await Actor.setValue(screenshotKey, screenshotBuffer, { contentType: 'image/png' });
+
+                // Extract comprehensive post data
+                const postData = await page.evaluate(() => {
+                    // Enhanced post text extraction
+                    function extractPostText() {
+                        const selectors = [
+                            '[data-testid="post_message"]',
+                            '[data-ad-preview="message"]',
+                            '.userContent',
+                            'div[dir="auto"]',
+                            '.story_body_container div',
+                            '[role="article"] div[dir="auto"]',
+                            '.text_exposed_root',
+                            '.text_exposed_show'
+                        ];
+
+                        for (const selector of selectors) {
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                const text = el.innerText?.trim();
+                                if (text && text.length > 50 && !isUIText(text)) {
+                                    return text;
+                                }
+                            }
+                        }
+
+                        // Fallback: smart text extraction
+                        const bodyText = document.body.innerText;
+                        const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean);
+                        
+                        // Look for substantial content blocks
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i];
+                            if (line.length > 100 && !isUIText(line)) {
+                                // Check if next few lines are related
+                                let fullText = line;
+                                for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+                                    const nextLine = lines[j];
+                                    if (nextLine.length > 20 && !isUIText(nextLine) && 
+                                        !nextLine.match(/^\d+\s+(likes?|comments?|shares?)$/i)) {
+                                        fullText += '\n' + nextLine;
+                                    } else if (nextLine.length < 20) {
+                                        break;
+                                    }
+                                }
+                                if (fullText.length > 200) {
+                                    return fullText;
+                                }
+                            }
+                        }
+
+                        return null;
                     }
-                };
+
+                    function isUIText(text) {
+                        const uiPatterns = [
+                            /^(Like|Comment|Share|See more|Facebook|Meta|Privacy|Terms|Home)$/i,
+                            /^\d+(\s+(comments?|likes?|shares?|reactions?))?$/i,
+                            /^(What's on your mind|Create a post|Live video)$/i,
+                            /^\d+\s+(Unread|unread)/i,
+                            /^(Friends|Groups|Marketplace|Messages|Messenger)$/i,
+                            /^(All reactions|Write a comment)$/i
+                        ];
+                        
+                        return uiPatterns.some(pattern => pattern.test(text.trim())) ||
+                               text.length < 10 ||
+                               (text.split(' ').length < 4 && !text.includes('\n'));
+                    }
+
+                    // Extract page URL from post
+                    function extractPageUrl() {
+                        const links = document.querySelectorAll('a[href*="facebook.com/"]');
+                        for (const link of links) {
+                            const href = link.href;
+                            if (href.includes('facebook.com/') && 
+                                !href.includes('/posts/') && 
+                                !href.includes('/photos/') &&
+                                !href.includes('/videos/') &&
+                                !href.includes('permalink') &&
+                                link.innerText && 
+                                link.innerText.trim().length > 2) {
+                                return href;
+                            }
+                        }
+                        return null;
+                    }
+
+                    const postText = extractPostText();
+                    const pageUrl = extractPageUrl();
+
+                    return {
+                        postText: postText,
+                        text: postText, // Duplicate for compatibility
+                        pageUrl: pageUrl,
+                        title: document.title,
+                        currentUrl: window.location.href
+                    };
+                });
+
+                // Extract time information
+                const timeInfo = await extractPostDateISO(page, { enableOcr: false });
                 
-                // Determine success and provide appropriate feedback
-                if (data.requiresLogin && !isLoggedIn) {
-                    console.log('Content requires login and no valid authentication');
-                    await Actor.pushData({
-                        ...result,
-                        warning: 'Content requires login. Provide valid Facebook cookies or email/password for full access.',
-                        partialData: true
-                    });
-                } else if (data.requiresLogin && isLoggedIn) {
-                    console.log('Content was login-protected but we have valid authentication');
-                    await Actor.pushData({
-                        ...result,
-                        warning: 'Content required login - accessed with valid authentication'
-                    });
-                } else if (data.contentCount > 0) {
-                    console.log(`Success! Found ${data.contentCount} content elements`);
-                    await Actor.pushData(result);
-                } else {
-                    console.log('No content found, but page loaded successfully');
-                    await Actor.pushData({
-                        ...result,
-                        warning: 'Page loaded but no recognizable content found'
-                    });
+                // Extract page information
+                let pageInfo = { category: null, phone: null, email: null, address: null, creationDate: null };
+                if (postData.pageUrl) {
+                    try {
+                        pageInfo = await extractPageInfo(page);
+                    } catch (error) {
+                        console.log('Could not extract page info:', error.message);
+                    }
                 }
+
+                // Build comprehensive result
+                const result = {
+                    postUrl: url,
+                    cookie_apply: cookieApplyResult,
+                    screenshotUrl: `https://api.apify.com/v2/key-value-stores/${process.env.APIFY_DEFAULT_KEY_VALUE_STORE_ID}/records/${screenshotKey}`,
+                    screenshotKey: screenshotKey,
+                    
+                    // Time information
+                    posted_at_raw: timeInfo?.raw || null,
+                    posted_at_iso: timeInfo?.iso || null,
+                    time_source: timeInfo?.source || null,
+                    postDate: timeInfo?.raw || null,
+                    
+                    // Content
+                    postText: postData.postText || null,
+                    text: postData.text || null,
+                    
+                    // Page information
+                    pageUrl: postData.pageUrl || null,
+                    category: pageInfo.category || null,
+                    phone: pageInfo.phone || null,
+                    email: pageInfo.email || null,
+                    address: pageInfo.address || null,
+                    creationDate: pageInfo.creationDate || null,
+                    
+                    // Status
+                    status: postData.postText ? 'success' : 'limited_content'
+                };
+
+                console.log('Extracted data summary:', {
+                    hasPostText: !!result.postText,
+                    hasPageUrl: !!result.pageUrl,
+                    hasTimeInfo: !!result.posted_at_iso,
+                    hasPageInfo: !!(result.category || result.phone || result.email)
+                });
+
+                await Actor.pushData(result);
                 
             } catch (error) {
                 console.error(`Error processing ${url}:`, error.message);
+                
                 await Actor.pushData({
-                    url: url,
+                    postUrl: url,
+                    cookie_apply: cookieApplyResult,
                     error: error.message,
-                    failed: true,
-                    timestamp: new Date().toISOString(),
-                    authentication: {
-                        isLoggedIn: isLoggedIn,
-                        method: authMethod,
-                        cookiesUsed: authMethod === 'cookies'
-                    }
+                    status: 'error',
+                    screenshotUrl: null,
+                    screenshotKey: null,
+                    posted_at_raw: null,
+                    posted_at_iso: null,
+                    time_source: null,
+                    postDate: null,
+                    postText: null,
+                    text: null,
+                    pageUrl: null,
+                    category: null,
+                    phone: null,
+                    email: null,
+                    address: null,
+                    creationDate: null
                 });
             } finally {
                 await page.close();
@@ -351,7 +376,7 @@ try {
             
             // Delay between requests
             if (i < urls.length - 1) {
-                const delay = isLoggedIn ? 2000 : 5000; // Shorter delay if logged in
+                const delay = isLoggedIn ? 2000 : 5000;
                 console.log(`Waiting ${delay}ms before next request...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
