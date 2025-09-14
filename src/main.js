@@ -1,5 +1,5 @@
 import { Actor } from 'apify';
-import { PuppeteerCrawler } from 'crawlee';
+import { PlaywrightCrawler } from 'crawlee';
 
 await Actor.init();
 
@@ -29,33 +29,98 @@ try {
 
     console.log('Processed URLs:', urls);
 
-    // Your existing crawler logic here...
-    const crawler = new PuppeteerCrawler({
+    // Create the crawler with Playwright
+    const crawler = new PlaywrightCrawler({
+        // Explicitly specify we want to use Playwright
+        browserPoolOptions: {
+            useFingerprints: false,
+            preLaunchHooks: [],
+            postLaunchHooks: [],
+        },
+        launchContext: {
+            launcher: 'playwright',
+            launchOptions: {
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                ]
+            }
+        },
         requestHandler: async ({ page, request }) => {
             console.log(`Processing: ${request.url}`);
             
-            // Wait for page to load
-            await page.waitForSelector('body', { timeout: 30000 });
-            
-            // Extract data - customize this based on what you want to scrape
-            const data = await page.evaluate(() => {
-                return {
-                    url: window.location.href,
-                    title: document.title,
-                    // Add more extraction logic here
-                };
-            });
+            try {
+                // Navigate to the URL
+                await page.goto(request.url, { 
+                    waitUntil: 'networkidle', 
+                    timeout: 30000 
+                });
+                
+                // Wait for body element
+                await page.waitForSelector('body', { timeout: 10000 });
+                
+                // Get basic page information
+                const data = await page.evaluate(() => {
+                    return {
+                        url: window.location.href,
+                        title: document.title,
+                        timestamp: new Date().toISOString(),
+                        content: document.body.innerText.substring(0, 1000), // First 1000 chars
+                        // Add Facebook-specific selectors here when needed
+                    };
+                });
 
-            // Save the data
-            await Actor.pushData(data);
+                console.log(`Successfully scraped: ${data.title}`);
+                
+                // Save the data
+                await Actor.pushData(data);
+                
+            } catch (error) {
+                console.error(`Error processing ${request.url}:`, error.message);
+                
+                // Save error info
+                await Actor.pushData({
+                    url: request.url,
+                    error: error.message,
+                    failed: true,
+                    timestamp: new Date().toISOString()
+                });
+            }
         },
-        failedRequestHandler: async ({ request }) => {
-            console.log(`Request ${request.url} failed`);
+        failedRequestHandler: async ({ request, error }) => {
+            console.error(`Request ${request.url} failed:`, error.message);
+            
+            // Save failed request info
+            await Actor.pushData({
+                url: request.url,
+                error: error.message,
+                failed: true,
+                timestamp: new Date().toISOString()
+            });
         },
+        maxRequestRetries: 2,
+        requestHandlerTimeoutSecs: 60,
+        maxConcurrency: 1, // Start with 1 to avoid rate limiting
     });
 
+    // Add requests to the queue
+    const requests = urls.map(url => ({ 
+        url,
+        uniqueKey: url 
+    }));
+    
+    await crawler.addRequests(requests);
+    
     // Run the crawler
-    await crawler.run(urls.map(url => ({ url })));
+    await crawler.run();
+    
+    console.log('Crawling completed successfully!');
 
 } catch (error) {
     console.error('Actor failed:', error);
