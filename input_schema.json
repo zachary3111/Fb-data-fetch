@@ -1,25 +1,27 @@
 {
-  "name": "fb-data-fetch",
-  "version": "1.0.0",
-  "type": "module",
-  "description": "Facebook data fetching actor",
-  "main": "src/main.js",
-  "scripts": {
-    "start": "node src/main.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "title": "Facebook Data Fetch Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "urls": {
+      "title": "Facebook URLs",
+      "type": "array",
+      "description": "List of Facebook URLs to fetch data from",
+      "editor": "stringArray",
+      "items": {
+        "type": "string",
+        "title": "URL"
+      },
+      "minItems": 1
+    },
+    "maxItems": {
+      "title": "Maximum items to fetch",
+      "type": "integer",
+      "description": "Maximum number of items to fetch per URL",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 100
+    }
   },
-  "dependencies": {
-    "apify": "^3.0.0",
-    "crawlee": "^3.0.0",
-    "playwright": "^1.40.0"
-  },
-  "keywords": [
-    "apify",
-    "actor",
-    "facebook",
-    "scraping",
-    "crawlee"
-  ],
-  "author": "",
-  "license": "Apache-2.0"
+  "required": ["urls"]
 }
