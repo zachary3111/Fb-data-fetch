@@ -1,56 +1,65 @@
-import { Actor, log } from "apify";
-import { chromium } from "playwright";
-import { parseCookiesInput } from "./utils/cookies.js";
-import { runPostDetails } from "./flows/details.js";
-import { runPostDates } from "./flows/dates.js";
-import { openDefaultDatasetInfo } from "./utils/misc.js";
+import { Actor } from 'apify';
+import { PuppeteerCrawler } from 'crawlee';
 
-await Actor.main(async () => {
-  const input = await Actor.getInput();
-  const {
-    mode = "POST_DETAILS",
-    urls = [],
-    cookies,
-    enableOcr = false,
-    min_wait_ms = 1200,
-    max_wait_ms = 2500,
-    headless = true,
-    viewport = { width: 1280, height: 900 },
-    timezoneId = "UTC",
-    locale = "en-US",
-    userAgent,
-  } = input || {};
+await Actor.init();
 
-  if (!Array.isArray(urls) || urls.length === 0) throw new Error("Input 'urls' must be a non-empty array");
-  if (min_wait_ms < 0 || max_wait_ms < 0 || max_wait_ms < min_wait_ms) throw new Error("Invalid waits: ensure 0 <= min <= max");
+try {
+    // Get the input
+    const input = await Actor.getInput();
+    console.log('Raw input:', input);
 
-  const browser = await chromium.launch({ headless });
-  const context = await browser.newContext({ viewport, userAgent: userAgent || undefined, timezoneId, locale });
-  const page = await context.newPage();
-
-  try {
-    const parsedCookies = parseCookiesInput(cookies, "https://www.facebook.com/");
-    if (parsedCookies.length) {
-      await context.addCookies(parsedCookies);
-      log.info("Added " + parsedCookies.length + " cookies.");
-    }
-
-    await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 120000 });
-    await page.waitForTimeout(rand(min_wait_ms, max_wait_ms));
-
-    if (mode === "POST_DATES") {
-      await runPostDates(page, urls, { min_wait_ms, max_wait_ms, enableOcr });
+    // Process the URLs input - convert from string to array if needed
+    let urls;
+    if (typeof input.urls === 'string') {
+        // Split by newlines and filter out empty lines
+        urls = input.urls
+            .split('\n')
+            .map(url => url.trim())
+            .filter(url => url.length > 0);
+    } else if (Array.isArray(input.urls)) {
+        urls = input.urls;
     } else {
-      await runPostDetails(page, urls, { min_wait_ms, max_wait_ms, enableOcr });
+        throw new Error('Input "urls" must be a string (one URL per line) or an array of URLs');
     }
 
-    const { itemCount } = await openDefaultDatasetInfo();
-    log.info("Run done. Items in default dataset: " + itemCount);
-  } finally {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
-  }
-});
+    // Validate that we have URLs
+    if (!urls || urls.length === 0) {
+        throw new Error('Input "urls" must be a non-empty array');
+    }
 
-function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+    console.log('Processed URLs:', urls);
+
+    // Your existing crawler logic here...
+    const crawler = new PuppeteerCrawler({
+        requestHandler: async ({ page, request }) => {
+            console.log(`Processing: ${request.url}`);
+            
+            // Wait for page to load
+            await page.waitForSelector('body', { timeout: 30000 });
+            
+            // Extract data - customize this based on what you want to scrape
+            const data = await page.evaluate(() => {
+                return {
+                    url: window.location.href,
+                    title: document.title,
+                    // Add more extraction logic here
+                };
+            });
+
+            // Save the data
+            await Actor.pushData(data);
+        },
+        failedRequestHandler: async ({ request }) => {
+            console.log(`Request ${request.url} failed`);
+        },
+    });
+
+    // Run the crawler
+    await crawler.run(urls.map(url => ({ url })));
+
+} catch (error) {
+    console.error('Actor failed:', error);
+    throw error;
+}
+
+await Actor.exit();
