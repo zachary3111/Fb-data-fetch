@@ -1,27 +1,91 @@
 {
-  "title": "Facebook Data Fetch Input",
+  "title": "Input",
+  "description": "Configure what to extract from Facebook posts.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "description": "What to extract: full post details or only the post's date/time.",
+      "editor": "select",
+      "enum": ["POST_DETAILS", "POST_DATES"],
+      "enumTitles": ["Post details (author, text, counts, date)", "Post dates only"]
+    },
     "urls": {
-      "title": "Facebook URLs",
-      "type": "string",
-      "description": "Enter Facebook URLs to fetch data from (one per line)",
-      "editor": "textarea",
-      "prefill": "https://www.facebook.com/example-page\nhttps://www.facebook.com/another-page"
+      "title": "Post URLs",
+      "type": "array",
+      "description": "Array of Facebook post URLs to open (one per line).",
+      "editor": "stringList",
+      "placeholderValue": "https://www.facebook.com/user/posts/123456789",
+      "default": []
     },
-    "maxItems": {
-      "title": "Maximum items to fetch",
+    "cookies": {
+      "title": "Cookies",
+      "type": "string",
+      "description": "JSON array, JSON {cookies:[...]}, or a raw Cookie header string.",
+      "editor": "textarea"
+    },
+    "enableOcr": {
+      "title": "Enable OCR fallback",
+      "type": "boolean",
+      "description": "Use Tesseract if DOM parsing fails (slower).",
+      "default": false
+    },
+    "min_wait_ms": {
+      "title": "Min wait (ms)",
       "type": "integer",
-      "description": "Maximum number of items to fetch per URL",
-      "minimum": 1,
-      "maximum": 1000,
-      "default": 100
+      "description": "Lower bound of randomized delay between actions.",
+      "default": 1200,
+      "minimum": 0,
+      "unit": "ms"
     },
-    "waitForSelector": {
-      "title": "Wait for selector",
+    "max_wait_ms": {
+      "title": "Max wait (ms)",
+      "type": "integer",
+      "description": "Upper bound of randomized delay between actions.",
+      "default": 2500,
+      "minimum": 0,
+      "unit": "ms"
+    },
+    "headless": {
+      "title": "Headless",
+      "type": "boolean",
+      "description": "Run browser in headless mode (no visible window).",
+      "default": true
+    },
+    "viewport_width": {
+      "title": "Viewport Width",
+      "type": "integer",
+      "description": "Browser viewport width in pixels.",
+      "default": 1280,
+      "minimum": 320
+    },
+    "viewport_height": {
+      "title": "Viewport Height", 
+      "type": "integer",
+      "description": "Browser viewport height in pixels.",
+      "default": 900,
+      "minimum": 320
+    },
+    "timezoneId": {
+      "title": "Timezone",
       "type": "string",
-      "description": "CSS selector to wait for before scraping (optional)",
+      "description": "IANA timezone for Playwright context (e.g., Asia/Manila).",
+      "editor": "textfield",
+      "default": "UTC"
+    },
+    "locale": {
+      "title": "Locale",
+      "type": "string",
+      "description": "Locale for the browser (e.g., en-US).",
+      "editor": "textfield",
+      "default": "en-US"
+    },
+    "userAgent": {
+      "title": "User-Agent override",
+      "type": "string",
+      "description": "Optional User-Agent string to spoof.",
       "editor": "textfield"
     }
   },
